@@ -109,7 +109,7 @@ bisheng --npu-arch=dav-2002 -O2 -std=c++17 -w -x asc 09_310p_aicore_matmul_allre
 
 # 2. 部署 kernel 到设备(部署链见开发进展文档附录 A.4)
 # 3. mpirun 双 rank 运行(rank 由 MPI 分配)
-export MF_310P_SHM_OVERLAP=1 MF_310P_OVERLAP_JSON=<libmf_overlap_v2.json 路径>
+export MF_310P_SHM_OVERLAP=1 MF_310P_OVERLAP_JSON=<libmf_overlap_v3.json 路径>
 export LD_LIBRARY_PATH=$ASCEND_HOME_PATH/aarch64-linux/lib64:$MPI_LIB:$LD_LIBRARY_PATH
 mpirun -np 2 /tmp/ex09   # root 用户加 --allow-run-as-root
 # 期望输出: 双方 "=== EX09 rN PASS ===" + 各档梯度表 + r0 最佳划分
