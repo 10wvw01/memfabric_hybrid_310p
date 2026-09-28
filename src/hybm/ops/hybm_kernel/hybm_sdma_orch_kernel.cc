@@ -137,59 +137,58 @@ int32_t doorbellViaHal(uint32_t devId, uint32_t sqId, uint32_t newTail)
 void buildStarsSdmaSqe(uint8_t sqe[kSqeSize], uint16_t streamId, uint16_t taskId, uint64_t src, uint64_t dst,
                        uint32_t len, uint32_t devId, uint64_t overflowAddr, uint16_t ssid)
 {
-    memset(sqe, 0, kSqeSize);          // 全零打底(残留数据勿入环)
-    sqe[0] = 0x09;                     // type: MEMCPY_ASYNC_SQE_V2(固件认的魔数)
-    memcpy(&sqe[4], &streamId, 2);     // off4:  rt_stream_id
-    memcpy(&sqe[6], &taskId, 2);       // off6:  task_id
-    sqe[8] = 0x00;                     // off8-11: 全 0(固件严格校验该域)
-    sqe[14] = 0xff;                    // off12-15: kernel_credit=0xff, 其余保留
-    sqe[16] = 0x00;                    // off16-19: 位域模板(opcode=NOT_ATOMIC + ie_dma 等)
+    memset(sqe, 0, kSqeSize);      // 全零打底(残留数据勿入环)
+    sqe[0] = 0x09;                 // type: MEMCPY_ASYNC_SQE_V2(固件认的魔数)
+    memcpy(&sqe[4], &streamId, 2); // off4:  rt_stream_id
+    memcpy(&sqe[6], &taskId, 2);   // off6:  task_id
+    sqe[8] = 0x00;                 // off8-11: 全 0(固件严格校验该域)
+    sqe[14] = 0xff;                // off12-15: kernel_credit=0xff, 其余保留
+    sqe[16] = 0x00;                // off16-19: 位域模板(opcode=NOT_ATOMIC + ie_dma 等)
     sqe[17] = 0xde;
     sqe[18] = 0x0e;
     sqe[19] = 0x00;
     uint16_t smmuStreamId = (devId == 0) ? 0x7F45 : 0xBF45; // 按 die 区分(hcomm 分支)
-    memcpy(&sqe[20], &smmuStreamId, 2); // off20: src_streamid
-    memcpy(&sqe[22], &ssid, 2);         // off22: src_substreamid(实时查询)
-    memcpy(&sqe[24], &smmuStreamId, 2); // off24: dst_streamid
-    memcpy(&sqe[26], &ssid, 2);         // off26: dst_substreamid(与 src 对称)
-    memcpy(&sqe[28], &len, 4);          // off28: length(字节)
+    memcpy(&sqe[20], &smmuStreamId, 2);                     // off20: src_streamid
+    memcpy(&sqe[22], &ssid, 2);                             // off22: src_substreamid(实时查询)
+    memcpy(&sqe[24], &smmuStreamId, 2);                     // off24: dst_streamid
+    memcpy(&sqe[26], &ssid, 2);                             // off26: dst_substreamid(与 src 对称)
+    memcpy(&sqe[28], &len, 4);                              // off28: length(字节)
     uint32_t lo = static_cast<uint32_t>(src & 0xFFFFFFFFu);
     uint32_t hi = static_cast<uint32_t>(src >> 32);
-    memcpy(&sqe[32], &lo, 4);           // off32: src.lo
-    memcpy(&sqe[36], &hi, 4);           // off36: src.hi
+    memcpy(&sqe[32], &lo, 4); // off32: src.lo
+    memcpy(&sqe[36], &hi, 4); // off36: src.hi
     lo = static_cast<uint32_t>(dst & 0xFFFFFFFFu);
     hi = static_cast<uint32_t>(dst >> 32);
-    memcpy(&sqe[40], &lo, 4);           // off40: dst.lo
-    memcpy(&sqe[44], &hi, 4);           // off44: dst.hi
-    sqe[50] = 0x20;                     // off48-51: 模板位(0x20 在 off50)
+    memcpy(&sqe[40], &lo, 4); // off40: dst.lo
+    memcpy(&sqe[44], &hi, 4); // off44: dst.hi
+    sqe[50] = 0x20;           // off48-51: 模板位(0x20 在 off50)
     lo = static_cast<uint32_t>(overflowAddr & 0xFFFFFFFFu);
     hi = static_cast<uint32_t>(overflowAddr >> 32);
-    memcpy(&sqe[52], &lo, 4);           // off52: overflow.lo
-    memcpy(&sqe[56], &hi, 4);           // off56: overflow.hi
+    memcpy(&sqe[52], &lo, 4); // off52: overflow.lo
+    memcpy(&sqe[56], &hi, 4); // off56: overflow.hi
 }
 
 // 提交上下文: 通道元数据 + 设备号
 struct SqContext {
     volatile ock::mf::HybmSdmaOrchResult *result; // 结果区(诊断)
-    uint64_t sqBase;  // SQ 环基址
-    uint32_t sqDepth; // SQ 环深度
-    uint32_t sqHead;  // SQ head(活查询初值)
-    uint32_t sqTail;  // SQ shadow tail
-    uint32_t streamId; // SQE 的 rt_stream_id
-    uint32_t devId;   // doorbell HAL 路径用
-    uint32_t sqId;    // 目标 SQ
+    uint64_t sqBase;                              // SQ 环基址
+    uint32_t sqDepth;                             // SQ 环深度
+    uint32_t sqHead;                              // SQ head(活查询初值)
+    uint32_t sqTail;                              // SQ shadow tail
+    uint32_t streamId;                            // SQE 的 rt_stream_id
+    uint32_t devId;                               // doorbell HAL 路径用
+    uint32_t sqId;                                // 目标 SQ
 };
 
 // SQE 入环: 只写环 + 推进 shadow tail, 不敲铃(调用方统一 doorbell); SQ 满返回 240
 int32_t submitSqe(SqContext *c, const uint8_t sqe[kSqeSize])
 {
-    uint32_t used = (c->sqTail >= c->sqHead) ? (c->sqTail - c->sqHead)
-                                             : (c->sqDepth - c->sqHead + c->sqTail);
+    uint32_t used = (c->sqTail >= c->sqHead) ? (c->sqTail - c->sqHead) : (c->sqDepth - c->sqHead + c->sqTail);
     if (c->sqDepth - used < 1) {
         return 240; // 环满(调用方退避重试)
     }
-    volatile uint8_t *slot = reinterpret_cast<volatile uint8_t *>(c->sqBase) +
-                             static_cast<uint64_t>(c->sqTail) * kSqeSize;
+    volatile uint8_t *slot =
+        reinterpret_cast<volatile uint8_t *>(c->sqBase) + static_cast<uint64_t>(c->sqTail) * kSqeSize;
     const volatile uint64_t *src = reinterpret_cast<const volatile uint64_t *>(sqe);
     volatile uint64_t *dst = reinterpret_cast<volatile uint64_t *>(slot);
     for (uint32_t i = 0; i < kSqeSize / 8; i++) {
@@ -239,7 +238,7 @@ int32_t cp1LiveQuery(const ock::mf::HybmSdmaOrchParam *p, SqContext *ctx)
     int32_t rDepth = cp1QueryProp(p->devId, p->sqId, DRV_SQCQ_PROP_SQ_DEPTH, &ctx->sqDepth, nullptr);
     int32_t rHead = cp1QueryProp(p->devId, p->sqId, DRV_SQCQ_PROP_SQ_HEAD, &head, nullptr);
     int32_t rTail = cp1QueryProp(p->devId, p->sqId, DRV_SQCQ_PROP_SQ_TAIL, &tail, nullptr);
-    (void)rStatus; // 状态仅诊断
+    (void)rStatus;    // 状态仅诊断
     if (rTail != 0) { // TAIL 失败: sqTail 是 SQE 写入位置, 失败即退出防覆写固件未消费 SQE
         return 1400 + (rTail & 0xFF);
     }
@@ -306,22 +305,22 @@ int32_t issueMailSqes(const ock::mf::HybmSdmaOrchParam *p, SqContext *ctx, uint1
 {
     const uint16_t streamId = static_cast<uint16_t>(ctx->streamId);
     uint8_t sqe[kSqeSize];
-    buildStarsSdmaSqe(sqe, streamId, static_cast<uint16_t>(seq), mail.src, mail.dst,
-                      static_cast<uint32_t>(mail.len), p->devId, p->overflowAddr, ssid);
+    buildStarsSdmaSqe(sqe, streamId, static_cast<uint16_t>(seq), mail.src, mail.dst, static_cast<uint32_t>(mail.len),
+                      p->devId, p->overflowAddr, ssid);
     for (uint32_t retry = 0; submitSqe(ctx, sqe) == 240; retry++) { // SQ 满退避重试
         if (retry >= kSqFullRetry) {
             return 1360; // 错误码: SQ 持续满
         }
         usleep(kSqFullBackoffUs);
     }
-    buildStarsSdmaSqe(sqe, streamId, static_cast<uint16_t>(seq + 1), arrMailSlot,
-                      peerArrStampSlot, 8, p->devId, p->overflowAddr, ssid); // ② 到达戳
+    buildStarsSdmaSqe(sqe, streamId, static_cast<uint16_t>(seq + 1), arrMailSlot, peerArrStampSlot, 8, p->devId,
+                      p->overflowAddr, ssid); // ② 到达戳
     if (submitSqe(ctx, sqe) != 0) {
         return 1361; // 错误码: 到达戳失败
     }
     buildStarsSdmaSqe(sqe, streamId, static_cast<uint16_t>(seq + 2), arrMailSlot,
-                      p->quietBase + (seq % SMEM_SHM_SDMA_RS_QUIET_SLOTS) * 8, 8, p->devId,
-                      p->overflowAddr, ssid); // ③ 完成戳
+                      p->quietBase + (seq % SMEM_SHM_SDMA_RS_QUIET_SLOTS) * 8, 8, p->devId, p->overflowAddr,
+                      ssid); // ③ 完成戳
     if (submitSqe(ctx, sqe) != 0) {
         return 1362; // 错误码: 完成戳失败
     }
@@ -346,19 +345,19 @@ int32_t consumeOneMail(const ock::mf::HybmSdmaOrchParam *p, SqContext *ctx, uint
     const uint64_t reqSlot = p->reqBase + (seq % SMEM_SHM_SDMA_RS_REQ_SLOTS) * sizeof(HybmSdmaReqMail);
     cacheInvalidateLine(reqSlot & ~static_cast<uintptr_t>(63));
     const volatile HybmSdmaReqMail *rm = reinterpret_cast<const volatile HybmSdmaReqMail *>(reqSlot);
-    HybmSdmaReqMail mail = {rm->src, rm->dst, rm->len, rm->imm}; // 快照(后续槽可复用)
-    const uint64_t peerSeg = mail.dst & ~(p->symSize - 1);       // 对端段基址(掩码算术)
+    HybmSdmaReqMail mail = {rm->src, rm->dst, rm->len, rm->imm};               // 快照(后续槽可复用)
+    const uint64_t peerSeg = mail.dst & ~(p->symSize - 1);                     // 对端段基址(掩码算术)
     const uint64_t peerRes = peerSeg + (p->physSize - SMEM_SHM_SDMA_RESERVED); // 对端保留区基址
-    const uint64_t arrMailSlot = peerRes + SMEM_SHM_SDMA_RS_ARR_MAIL +
-                                 (seq % SMEM_SHM_SDMA_RS_ARR_SLOTS) * sizeof(HybmSdmaArrMail);
+    const uint64_t arrMailSlot =
+        peerRes + SMEM_SHM_SDMA_RS_ARR_MAIL + (seq % SMEM_SHM_SDMA_RS_ARR_SLOTS) * sizeof(HybmSdmaArrMail);
     volatile HybmSdmaArrMail *am = reinterpret_cast<volatile HybmSdmaArrMail *>(arrMailSlot);
     am->seq = seq + 1; // 戳值(1 基, 供两支戳 SQE 复用为拷贝源; 0 保留为"空", 防幻影)
     am->dst = mail.dst;
     am->len = mail.len;
     am->imm = mail.imm;
     cacheFlushLine(arrMailSlot & ~static_cast<uintptr_t>(63)); // 刷出邮件像(SQE 可读)
-    const uint64_t peerArrStamp = peerRes + SMEM_SHM_SDMA_RS_ARR_STAMP +
-                                  (seq % SMEM_SHM_SDMA_RS_ARR_SLOTS) * 8; // 对端到达戳槽
+    const uint64_t peerArrStamp =
+        peerRes + SMEM_SHM_SDMA_RS_ARR_STAMP + (seq % SMEM_SHM_SDMA_RS_ARR_SLOTS) * 8; // 对端到达戳槽
     auto ret = issueMailSqes(p, ctx, ssid, seq, mail, arrMailSlot, peerArrStamp);
     if (ret != 0) {
         return ret;
@@ -374,8 +373,7 @@ extern "C" __attribute__((visibility("default"))) uint32_t HybmSdmaOrchEpoch(voi
 {
     using namespace ock::mf;
     HybmSdmaOrchParam *p = static_cast<HybmSdmaOrchParam *>(args);
-    volatile HybmSdmaOrchResult *result =
-        reinterpret_cast<volatile HybmSdmaOrchResult *>(p->resultAddr);
+    volatile HybmSdmaOrchResult *result = reinterpret_cast<volatile HybmSdmaOrchResult *>(p->resultAddr);
     result->magic = HYBM_SDMA_ORCH_RESULT_MAGIC;
     result->mainRet = 0;
     result->consumed = 0;
