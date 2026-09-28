@@ -22,7 +22,7 @@ add_subdirectory(acc_offload/csrc)
 
 # ---- AICPU 编排 kernel(随主构建一并产出, 免独立构建步骤) ----
 # 产物: <build>/src/hybm/ops/hybm_kernel/{libmf_sdma_orch.so, libmf_sdma_orch.json,
-#       libmf_sdma_orch_v4.json} + A3 血统 libcann_hybm_kernel.*(安装至
+#       libmf_sdma_orch_v${MF_SDMA_ORCH_KVER}.json(版本号从 hybm_sdma_contract.h 解析)} + A3 血统 libcann_hybm_kernel.*(安装至
 #       ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel/, 与运行时安装前缀发现路径一致)
 # 门控: 仅 NPU 构建; CANN 交叉工具链(hcc)缺失时优雅跳过(如无 CANN 的 CI 环境),
 #       不阻断主库构建

@@ -48,7 +48,7 @@ constexpr uint32_t HYBM_SDMA_ORCH_BLOCK_DIM = 1;       /* 单 block(kernel 状�
 constexpr uint32_t HYBM_SDMA_ORCH_LAUNCH_TIMEOUT_S = 25; /* KFC 命令超时 attr(设备 shell 挂死防线; 命令毫秒级, 不触级联) */
 constexpr uint32_t HYBM_SDMA_ORCH_EPOCH_ATTR_TIMEOUT_S = 60; /* epoch launch attr 占位值: 须 > 击杀边界(板间 28~36s), 永不先触发 */
 constexpr char HYBM_SDMA_ORCH_FUNC_NAME[] = "HybmSdmaOrchEpoch"; /* epoch 消费 kernel 入口符号 */
-constexpr char HYBM_SDMA_ORCH_DEFAULT_JSON[] = "libmf_sdma_orch_v9.json"; /* CWD 缺省 json(与 KVER 同步) */
+constexpr char HYBM_SDMA_ORCH_DEFAULT_JSON[] = "libmf_sdma_orch_v10.json"; /* CWD 缺省 json(与 KVER 同步) */
 constexpr char HYBM_SDMA_ORCH_CUST_JSON[] = "libmf_sdma_orch.json";  /* CUST 迁移 json 名(与 launch json 同目录) */
 constexpr char HYBM_SDMA_ORCH_CUST_SO[] = "libmf_sdma_orch.so";      /* host 侧 kernel so 名(CUST 迁移源) */
 /* CP1 搜索路径(实测: 每卡独立设备 OS 文件系统, 须在本卡设备上部署) */
@@ -600,7 +600,7 @@ Result SdmaOrchestrator::LaunchEpoch()
     /* attr 超时仅作 API 占位: runtime 拒绝空属性 cfg(numAttrs=0 实测 107000 invalid
      * value); 取值须大于击杀边界(板间漂移 28~36s, 本机实测 35.9s)使其永不先触发
      * (超时击杀终局为 hdc 断链/DEV_RUNNING_DOWN, 进程级不可恢复); epoch 真正的
-     * 自限由 kernel 侧墙钟(18s, cntvct_el0 标定)保证 */
+     * 自限由 kernel 侧壁钟(15s, cntvct/cntfrq_el0 直读)保证 */
     aclrtLaunchKernelAttr attr{};
     attr.id = aclrtLaunchKernelAttrId::ACL_RT_LAUNCH_KERNEL_ATTR_TIMEOUT;
     attr.value.timeout = HYBM_SDMA_ORCH_EPOCH_ATTR_TIMEOUT_S;
