@@ -85,6 +85,11 @@ private:
     Result AllocWorkspace();                           /* 工作区分配与清零 */
     Result LoadOrchestratorKernel();                   /* json 解析 + 部署探测 + 自动部署后加载 */
     Result TryLoadKernel(const std::string &jsonPath); /* 单次加载尝试(日志由调用方分层记) */
+    /* KFC-free 直连加载: CUST 迁移通道(mode=1)装载并直接使用其函数句柄;
+     * 设备侧 cust so manager 为本进程写 so + 建 per-process 软链目录 +
+     * NotifyAICPUInfo 注册 soName, launch 经 CUST 类句柄自解析,
+     * 无需 aicpu_kernels_device 落盘(该步依赖 KFC shell 通道) */
+    Result LoadViaCustDirect(const std::string &launchJsonPath);
     Result DeployOrchestratorKernel(const std::string &launchJsonPath, const std::string &dst); /* 自动部署 */
     Result MigrateViaCustChannel(const std::string &dir, uint64_t &soSize); /* CUST 通道迁移落盘 */
     Result LoadKfcChannel(aclrtFuncHandle &fh); /* KFC 通道装载(临时 json→mode=0 加载→句柄) */

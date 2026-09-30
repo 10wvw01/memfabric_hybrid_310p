@@ -70,6 +70,14 @@ inline const std::string MF_CONFIG_STORE_PORT_END =
 inline const std::string MF_SDMA_ORCH_DISABLE = GetEnvStr("MF_SDMA_ORCH_DISABLE"); // SdmaOrchestrator::Disabled 读取
 // 协同编排 kernel 的 launch json 路径(缺省依次: 安装前缀自动发现 → CWD 的 libmf_sdma_orch_v10.json)
 inline const std::string MF_SDMA_ORCH_JSON = GetEnvStr("MF_SDMA_ORCH_JSON"); // LoadOrchestratorKernel 读取
+// KFC-free CUST 直连加载开关(诊断用, 默认关): 经 CUST 迁移通道装载编排 kernel 并
+// 直接使用 CUST 类函数句柄。实测(2026-09-30, CANN 9.1.0/310P3): CUST 直连可使
+// 池创建在 KFC system() 通道失效的设备上成功, 且 kernel 在 aicpu_custom_scheduler
+// 内可执行; 但 custom 引擎环境受限(无 /home/HwHiAiUser/hs 运行库), epoch 的
+// halSqCqQuery 返回 24(SQ 属 regular 引擎进程上下文), 数据面不可用——故默认
+// 关闭, 仅作 KFC 链失效环境的诊断/演进实验入口。
+inline const std::string MF_SDMA_ORCH_CUST_DIRECT =
+    GetEnvStr("MF_SDMA_ORCH_CUST_DIRECT"); // SdmaOrchestrator::LoadOrchestratorKernel 读取
 inline const std::string MF_GROUP_JOIN_MAX_TIMEOUT = GetEnvStr("MF_GROUP_JOIN_MAX_TIMEOUT");
 inline const std::string MF_GROUP_RETRY_TIME = GetEnvStr("MF_GROUP_RETRY_TIME", "MF_SMEM_GROUP_RETRY_TIME");
 inline const std::string MF_ACC_CHECK_PERIOD_HOURS =

@@ -291,6 +291,18 @@ Result SdmaOrchestrator::LoadOrchestratorKernel()
         return BM_INVALID_PARAM;
     }
     const std::string dst = std::string(HYBM_SDMA_ORCH_DEV_SEARCH_DIR) + "/" + devSoName;
+    /*
+     * KFC-free 直连(诊断, MF_SDMA_ORCH_CUST_DIRECT=1 显式启用): CUST 迁移本身是
+     * driver 通道(不经设备 OS shell), 设备侧 cust so manager 为本进程落盘 so +
+     * 建 per-process 软链目录并以 NotifyAICPUInfo 注册 soName, CUST 类函数句柄可
+     * 直接 launch。KFC system() 失效(加固/重启后设备 OS)时该路径可使池创建成功,
+     * 但 custom 引擎环境受限(LD_LIBRARY_PATH 无 /home/HwHiAiUser/hs 运行库),
+     * epoch 的 halSqCqQuery 返回 24(SQ 属 regular 引擎进程上下文), 数据面不可用
+     * —— 故默认关闭, 走原 KFC 链(预部署探测/自动部署)。
+     */
+    if (env::MF_SDMA_ORCH_CUST_DIRECT == "1" && LoadViaCustDirect(resolved) == BM_OK) {
+        return BM_OK;
+    }
     const auto gate = KfcExec("test -f " + dst, true); // 探测(文件缺失为首轮预期, 降级 INFO)
     if (gate != HYBM_SDMA_ORCH_KFC_CMD_EXIT_ERR && gate != BM_OK) {
         // KFC 不可用(锁定环境): 按预部署假定直接加载, 文件若真缺失由数据面 wait 显式报错
@@ -325,6 +337,45 @@ Result SdmaOrchestrator::TryLoadKernel(const std::string &jsonPath)
         return ret;
     }
     return DlAclApi::AclrtBinaryGetFunction(binHandle_, HYBM_SDMA_ORCH_FUNC_NAME, &funcHandle_);
+}
+
+Result SdmaOrchestrator::LoadViaCustDirect(const std::string &launchJsonPath)
+{
+    const std::string dir = DirOf(launchJsonPath); // 三件套同目录(launch json 旁)
+    const std::string custJson = dir + "/" + HYBM_SDMA_ORCH_CUST_JSON;
+    char resolved[PATH_MAX] = {0};
+    if (realpath(custJson.c_str(), resolved) == nullptr || access(resolved, R_OK) != 0) {
+        BM_LOG_INFO("cust json not accessible, skip KFC-free direct load, path: " << custJson);
+        return BM_FILE_NOT_ACCESS;
+    }
+    /* 与 MigrateViaCustChannel 同构: mode=1 CUST 迁移(本身不落盘, GetFunction
+     * 触发设备侧写 so + 软链 + 注册); 不做 KFC 残留清理(CUST 文件按本进程
+     * hostpid 落盘, 无共享文件拼接风险) */
+    aclrtBinaryLoadOption loadOption{};
+    loadOption.type = aclrtBinaryLoadOptionType::ACL_RT_BINARY_LOAD_OPT_CPU_KERNEL_MODE;
+    loadOption.value.cpuKernelMode = 1; /* mode=1: H2D 迁移通道(CUSTAICPUKernel 专用) */
+    aclrtBinaryLoadOptions loadOptions{};
+    loadOptions.options = &loadOption;
+    loadOptions.numOpt = 1;
+    aclrtBinHandle bh = nullptr;
+    auto ret = DlAclApi::AclrtBinaryLoadFromFile(resolved, &loadOptions, &bh);
+    if (ret != BM_OK) {
+        BM_LOG_INFO("cust direct load failed, ret: " << ret << " json: " << resolved);
+        return ret;
+    }
+    aclrtFuncHandle fh = nullptr;
+    ret = DlAclApi::AclrtBinaryGetFunction(bh, HYBM_SDMA_ORCH_FUNC_NAME, &fh);
+    custBinHandle_ = bh; // 保活: 持句柄至进程退出(迁移进程退出才触发清理链, 本进程即用户进程)
+    if (ret != BM_OK || fh == nullptr) {
+        /* GetFunction 返回不可靠(实测正确入口名也可能非 0), 直连无法成立;
+         * 已落盘的 CUST 文件对回落路径的 MigrateViaCustChannel 无害(幂等重迁移) */
+        BM_LOG_INFO("cust direct getfunc ret: " << ret << " (fall back to KFC chain), json: " << resolved);
+        return ret != BM_OK ? ret : BM_ERROR;
+    }
+    funcHandle_ = fh; // 直接经 CUST 类句柄 launch(设备侧按本进程注册的 soName 解析)
+    BM_LOG_WARN("orchestrator loaded via CUST direct handle (KFC-free), devId: " << devId_
+                                                                              << " json: " << resolved);
+    return BM_OK;
 }
 
 Result SdmaOrchestrator::DeployOrchestratorKernel(const std::string &launchJsonPath, const std::string &dst)
