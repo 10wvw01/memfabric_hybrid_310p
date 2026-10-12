@@ -32,8 +32,8 @@ struct AclVmmExportInfo {
     uint64_t magic{ACL_VMM_HBM_SLICE_EXPORT_INFO_MAGIC};
     uint32_t segmentType{SEGMENT_TYPE_DEFAULT};
     uint32_t version{EXPORT_INFO_VERSION};
-    uint64_t gva{0};       // 导出方窗口内 GVA(与本地窗口对称, 同 slot 布局)
-    uint64_t deviceVa{0};  // 同 gva(对称窗口 GVA==DVA)
+    uint64_t gva{0};      // 导出方窗口内 GVA(与本地窗口对称, 同 slot 布局)
+    uint64_t deviceVa{0}; // 同 gva(对称窗口 GVA==DVA)
     uint32_t sliceIndex{0};
     uint32_t devId{0}; // 导出方 user device id(die 对判定: devId/2 相同即同卡)
     uint32_t pid{0};
@@ -83,6 +83,7 @@ private:
     Result MapPhysicalToOwnSlot(aclrtDrvMemHandle handle, uint64_t size, uint64_t allocAddr) noexcept;
     Result RegisterAndExportSlice(const MemSlicePtr &slice, aclrtDrvMemHandle handle, uint64_t allocAddr,
                                   uint64_t size) noexcept;
+    Result MallocPhysicalWithFallback(uint64_t size, aclrtDrvMemHandle &handle) noexcept;
     Result ImportOne(const AclVmmExportInfo &im) noexcept;
     Result ImportHandleForDiePair(const AclVmmExportInfo &im, aclrtDrvMemHandle &handle) noexcept;
     Result MapImportedToSlot(const AclVmmExportInfo &im, aclrtDrvMemHandle handle, uint64_t slotAddr) noexcept;
@@ -91,7 +92,7 @@ private:
     bool IsDiePair(uint32_t peerDevId) const noexcept;
     uint64_t OwnSlotBase() const noexcept;
     uint64_t SlotBase(uint32_t rankId) const noexcept;
-    void FillMemProp(aclrtPhysicalMemProp &prop) const noexcept;
+    void FillMemProp(aclrtPhysicalMemProp &prop, aclrtMemAttr memAttr) const noexcept;
 
     std::vector<AclVmmExportInfo> imports_;
     std::unordered_set<uint64_t> importKeys_; // (rankId<<32)|sliceIndex, Import 去重
@@ -99,10 +100,10 @@ private:
     uint64_t totalVirtualSize_{0UL};          // rankCnt * maxSize
     uint64_t allocatedSize_{0UL};
 
-    std::map<uint32_t, MemSliceStatus> slices_;              // index -> (slice, own handle)
-    std::map<uint32_t, std::string> exportMap_;              // index -> serialized export info
-    std::map<uint64_t, aclrtDrvMemHandle> mappedGvaMem_;     // slot addr -> imported handle
-    std::vector<aclrtDrvMemHandle> orphanHandles_;           // unmap 成功但 free 失败的遗留句柄
+    std::map<uint32_t, MemSliceStatus> slices_;          // index -> (slice, own handle)
+    std::map<uint32_t, std::string> exportMap_;          // index -> serialized export info
+    std::map<uint64_t, aclrtDrvMemHandle> mappedGvaMem_; // slot addr -> imported handle
+    std::vector<aclrtDrvMemHandle> orphanHandles_;       // unmap 成功但 free 失败的遗留句柄
 };
 } // namespace mf
 } // namespace ock

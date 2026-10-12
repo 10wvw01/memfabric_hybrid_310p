@@ -22,7 +22,7 @@
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 #endif
 
-#define private public
+#define private   public
 #define protected public
 #include "hybm_acl_vmm_segment.h"
 #undef private
@@ -32,6 +32,7 @@
 #include "hybm_va_manager.h"
 #include "hybm_mem_slice.h"
 #include "hybm_ex_info_transfer.h"
+#include "hybm_vmm_based_segment.h"
 
 namespace ock {
 namespace mf {
@@ -63,7 +64,8 @@ protected:
     }
     static void ResetStubInjections()
     {
-        for (const char *sym : {"g_stubSetCurrentContextFail", "g_stubSetDeviceFail", "g_stubSyncStreamFail"}) {
+        for (const char *sym :
+             {"g_stubSetCurrentContextFail", "g_stubSetDeviceFail", "g_stubSyncStreamFail", "g_stubMallocP2pOom"}) {
             auto *flag = StubSym(sym);
             if (flag != nullptr) {
                 *flag = 0;
@@ -120,8 +122,8 @@ TEST_F(HybmAclVmmSegmentTest, ReserveAndAlloc)
     MemSlicePtr slice = nullptr;
     ASSERT_EQ(seg.AllocLocalMemory(HYBM_LARGE_PAGE_SIZE, slice), BM_OK);
     ASSERT_NE(slice, nullptr);
-    ASSERT_EQ(slice->gva_, reinterpret_cast<uint64_t>(base));          // own slot 基址
-    ASSERT_EQ(slice->vAddress_, slice->gva_);                          // 对称窗口 GVA==DVA
+    ASSERT_EQ(slice->gva_, reinterpret_cast<uint64_t>(base)); // own slot 基址
+    ASSERT_EQ(slice->vAddress_, slice->gva_);                 // 对称窗口 GVA==DVA
     ASSERT_EQ(slice->size_, HYBM_LARGE_PAGE_SIZE);
     ASSERT_EQ(seg.slices_.size(), 1UL);
     ASSERT_EQ(seg.exportMap_.size(), 1UL);
@@ -133,6 +135,23 @@ TEST_F(HybmAclVmmSegmentTest, ReserveAndAlloc)
     size_t expSize = 0;
     ASSERT_EQ(seg.GetExportSliceSize(expSize), BM_OK);
     ASSERT_EQ(expSize, UNIFIED_EXCHANGE_SEG_INFO_SIZE);
+}
+
+TEST_F(HybmAclVmmSegmentTest, AllocPhysicalP2pOomNoFallback)
+{
+    // P2P_HUGE→HBM_HUGE 回退已移除: 注入 P2P 分区 OOM(207001) 后分配直接失败
+    auto *oom = StubSym("g_stubMallocP2pOom");
+    ASSERT_NE(oom, nullptr);
+    *oom = 1;
+    const uint64_t maxSize = 2UL * HYBM_LARGE_PAGE_SIZE;
+    MemSegmentOptions opt = MakeOptions(0, 2, maxSize, maxSize);
+    HybmAclVmmSegment seg(opt, 0);
+    void *base = nullptr;
+    ASSERT_EQ(seg.ReserveMemorySpace(&base), BM_OK);
+    MemSlicePtr slice = nullptr;
+    ASSERT_NE(seg.AllocLocalMemory(HYBM_LARGE_PAGE_SIZE, slice), BM_OK);
+    ASSERT_EQ(slice, nullptr);
+    ASSERT_EQ(seg.UnReserveMemorySpace(), BM_OK);
 }
 
 TEST_F(HybmAclVmmSegmentTest, ExportImportMmapFullChain)
@@ -223,15 +242,16 @@ TEST_F(HybmAclVmmSegmentTest, RemoveImportedAndRelease)
 
 #if MF_ACL_VMM_UT_HAS_MOCKCPP
 /* Create 分派用例需 mock InitDeviceInfo(否则 stub soc name 覆盖 socType_), 依赖 mockcpp 环境 */
-TEST_F(HybmAclVmmSegmentTest, CreateDispatchesToAclVmmFor310P)
+TEST_F(HybmAclVmmSegmentTest, CreateDispatchesToVmmBasedFor310P)
 {
-    MOCKER_CPP(&ock::mf::MemSegment::InitDeviceInfo, Result (*)(int32_t)).stubs().will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::MemSegment::InitDeviceInfo, Result(*)(int32_t)).stubs().will(returnValue(BM_OK));
     MemSegment::socType_ = AscendSocType::ASCEND_310P;
     MemSegmentOptions opt = MakeOptions(0, 2, HYBM_LARGE_PAGE_SIZE, HYBM_LARGE_PAGE_SIZE);
     auto seg = MemSegment::Create(opt, 0);
     GlobalMockObject::verify();
     ASSERT_NE(seg, nullptr);
-    ASSERT_NE(std::dynamic_pointer_cast<HybmAclVmmSegment>(seg), nullptr);
+    // 310P 现在分派到 HybmVmmBasedSegment(不再分派到 HybmAclVmmSegment)
+    ASSERT_NE(std::dynamic_pointer_cast<HybmVmmBasedSegment>(seg), nullptr);
 }
 #endif
 
