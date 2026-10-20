@@ -8,7 +8,8 @@ constexpr uint64_t HYBM_G1C_DEVICE_TRACE_OFF = 0x100;
 enum HybmG1cPhase : uint64_t {
     G1C_EPOCH_START = 1, G1C_MAIL_READ = 2, G1C_SQE_READY = 3,
     G1C_BEFORE_DOORBELL = 4, G1C_AFTER_DOORBELL = 5,
-    G1C_EPOCH_EXIT = 6, G1C_DEVICE_ERROR = 7
+    G1C_EPOCH_EXIT = 6, G1C_DEVICE_ERROR = 7,
+    G1C_IDLE_SQ_SAMPLE = 8
 };
 struct alignas(64) HybmG1cDeviceTrace {
     uint64_t seqBegin;  // 帧标识，用于剔除混合快照
