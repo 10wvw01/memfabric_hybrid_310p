@@ -761,6 +761,17 @@ void SdmaOrchestrator::SupervisorLoop()
     const uint64_t wsBase = workspace_.load();
     uint32_t errors = 0; // 连续失败计数(成功即清零)
     uint64_t heartbeat = 0;
+    // 仅在显式 MF_SDMA_ORCH_DIAG=1 时开启只读快照；不修改 SQE、邮箱或 Epoch 协议。
+    const char *diagEnv = std::getenv("MF_SDMA_ORCH_DIAG");
+    const bool diagEnabled = diagEnv != nullptr && std::strcmp(diagEnv, "1") == 0;
+    uint64_t diagEpoch = 1;
+    uint64_t diagLastReqHead = 0;
+    uint64_t diagLastReqTail = 0;
+    if (diagEnabled) {
+        BM_LOG_INFO("[MF_DIAG] start epoch: " << diagEpoch << " devId: " << devId_
+                    << " sqId: " << sqId_ << " budgetS: " << epochParam_.epochBudgetS
+                    << " reqBase: 0x" << std::hex << epochParam_.reqBase);
+    }
     auto tEpoch = std::chrono::steady_clock::now(); /* 首纪起点(耗时观测) */
     while (!stopFlag_.load()) {
         /* 心跳: 每 100ms 以同步 H2D 写递增计数(同步调用返回即完成——
@@ -787,12 +798,49 @@ void SdmaOrchestrator::SupervisorLoop()
             }
             continue;
         }
+        // 低频采集请求环游标，作为真实故障前后的持续进度依据。
+        // 16B D2H 是两个相邻 u64 的近实时快照，非跨写入者原子读；
+        // 不用它单独证明缓存丢写，也不把 result.consumed 当作实时计数。
+        if (diagEnabled && (heartbeat % HYBM_SDMA_ORCH_HEARTBEAT_HZ) == 0) {
+            struct ReqCursors {
+                uint64_t tail;
+                uint64_t head;
+            } cursors = {};
+            const uint64_t addr = epochParam_.reqBase + SMEM_SHM_SDMA_RS_REQ_TAIL;
+            const auto diagRet = DlAclApi::AclrtMemcpy(
+                &cursors, sizeof(cursors), reinterpret_cast<const void *>(addr),
+                sizeof(cursors), ACL_MEMCPY_DEVICE_TO_HOST);
+            if (diagRet == BM_OK) {
+                diagLastReqHead = cursors.head;
+                diagLastReqTail = cursors.tail;
+                const bool valid = cursors.tail >= cursors.head &&
+                                   cursors.tail - cursors.head <= SMEM_SHM_SDMA_RS_REQ_SLOTS;
+                BM_LOG_INFO("[MF_DIAG] tick epoch: " << diagEpoch
+                            << " devId: " << devId_ << " hb: " << heartbeat
+                            << " reqHead: " << cursors.head << " reqTail: " << cursors.tail
+                            << " reqPending: " << (valid ? cursors.tail - cursors.head : 0)
+                            << " cursorsValid: " << valid
+                            << " exitReason: " << r.exitReason << " mainRet: " << r.mainRet);
+            } else {
+                BM_LOG_WARN("[MF_DIAG] req cursors D2H failed, devId: " << devId_
+                            << " epoch: " << diagEpoch << " ret: " << diagRet);
+            }
+        }
         if (r.exitReason == HYBM_SDMA_ORCH_EXIT_RUNNING) {
             continue; // 当前纪仍在跑
         }
         /* 纪已退出: 耗时观测(≈预算=心跳生效; 持续远超说明异常, 影响同步等待上界) */
         const auto epochMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - tEpoch).count();
+        if (diagEnabled) {
+            // result 的 consumed/headAfter 仅在 Epoch 退出后才作为稳定快照解释。
+            BM_LOG_INFO("[MF_DIAG] exit epoch: " << diagEpoch << " devId: " << devId_
+                        << " durationMs: " << epochMs << " exitReason: " << r.exitReason
+                        << " mainRet: " << r.mainRet << " consumed: " << r.consumed
+                        << " sqHeadAfter: " << r.headAfter
+                        << " lastReqHead: " << diagLastReqHead
+                        << " lastReqTail: " << diagLastReqTail);
+        }
         if (r.exitReason == HYBM_SDMA_ORCH_EXIT_ERROR) {
             BM_LOG_ERROR("epoch exited with error, mainRet: " << r.mainRet << " consumed: " << r.consumed
                          << " durationMs: " << epochMs << " sqId: " << sqId_);
@@ -828,6 +876,11 @@ void SdmaOrchestrator::SupervisorLoop()
             continue;
         }
         tEpoch = std::chrono::steady_clock::now(); // 新纪起点
+        if (diagEnabled) {
+            ++diagEpoch;
+            BM_LOG_INFO("[MF_DIAG] start epoch: " << diagEpoch << " devId: " << devId_
+                        << " sqId: " << sqId_);
+        }
         errors = 0;
     }
 }
