@@ -53,3 +53,8 @@ unset MF_SDMA_ORCH_EPOCH_BUDGET_S  # 保持 15 秒 Epoch；禁止无限常驻
 状态：**已实机验证（2026-10-20，310P3 双 Rank）**；仅诊断用途，不具备生产启用条件。
 实机结论：CP SQ 消费链在故障瞬间健康排空，第一停止点位于 V2 到达邮件等待侧（详见
 vllm-ascend G1-C 执行报告）；根因仍未定。
+**2026-10-21 证据整理轮增量**：结构化统一时间线与 1024 边界核算已归档于 vllm-ascend
+G1-C 分支 `evidence/g1c_20261020/`（唯一丢失邮件 = rank1 chunk1，seq 1023，到达槽
+ARR[1023] 末槽、SQE 链止于 SQ 末槽 1023；两环边界被 ARR_SLOTS=SQ 深度=1024 × 3
+SQE/邮件算术锁定）。复核与 G1-D 裁决入口：vllm-ascend 分支
+`diag/310p3-g1d-minimal-forensics-20261021` 的 `G1D_REVIEW_REQUEST_20261021.md`。
