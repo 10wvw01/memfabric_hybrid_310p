@@ -37,7 +37,7 @@ unset MF_SDMA_ORCH_EPOCH_BUDGET_S  # 保持 15 秒 Epoch；禁止无限常驻
 
 ## 判别要求与回退
 
-1. 若 `phase=4` 停住，而软件已生成多封 SQE，核验 Hall Query 返回码、SQ 硬件 Head/Tail 与 V2 `signal/wait` 阶段；Doorbell 前停顿不等于硬件 SQ 卡死。
+1. 若 `phase=4` 停住，而软件已生成多封 SQE，核验 HAL Query 返回码、SQ 硬件 Head/Tail 与 V2 `signal/wait` 阶段；Doorbell 前停顿不等于硬件 SQ 卡死。
 2. 若 `phase=5/8` 持续出现，而硬件 Head 长期不动、软件有积压，才考虑 CP SQ / 固件消费链为第一停止环节候选。
 3. `reqPending=0` 是 Host 请求环状态，不能替代 CP SQ 的 `used/depth`；结果只有在连续多个有效样本以及双 Rank 时间线对齐时可判读。
 4. 诊断 HAL 查询和工作区 cache clean 改变 AICPU 时间线；不能与未埋点 F01/B02 混算故障复现率。
