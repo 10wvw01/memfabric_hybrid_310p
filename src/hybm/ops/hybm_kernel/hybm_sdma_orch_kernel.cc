@@ -465,6 +465,12 @@ extern "C" __attribute__((visibility("default"))) uint32_t HybmSdmaOrchEpoch(voi
         }
         uint64_t tail = loadCell(p->reqBase - SMEM_SHM_SDMA_RS_REQ_RING + SMEM_SHM_SDMA_RS_REQ_TAIL);
         if (head == tail) { // 环空
+#ifdef HYBM_G1C_DEVICE_TRACE
+            // 空闲阶段约每 0.8~1.5s 观测硬件 SQ 进度，不能只依赖每纪尾的 headAfter。
+            if ((loops & 8191ULL) == 0) {
+                g1cStamp(p, &ctx, head, G1C_IDLE_SQ_SAMPLE, 0, true);
+            }
+#endif
             usleep(HYBM_SDMA_ORCH_EPOCH_IDLE_US);
             continue;
         }
