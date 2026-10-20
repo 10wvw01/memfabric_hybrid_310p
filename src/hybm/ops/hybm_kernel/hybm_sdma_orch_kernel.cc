@@ -243,8 +243,13 @@ void g1cStamp(const ock::mf::HybmSdmaOrchParam *p, const SqContext *ctx,
     using namespace ock::mf;
     auto *stamp = reinterpret_cast<volatile HybmG1cDeviceTrace *>(
         p->resultAddr + HYBM_G1C_DEVICE_TRACE_OFF);
-    uint32_t head = ctx->sqHead, tail = ctx->sqTail;
-    int32_t rh = -1, rt = -1;
+    // 未重新查询时保留上次设备侧 HAL 采样，不把 stale ctx->sqHead 误报为实时值。
+    const uint64_t lastHeadTail = stamp->liveHeadTail;
+    const uint64_t lastQueryRet = stamp->queryRet;
+    uint32_t head = static_cast<uint32_t>(lastHeadTail);
+    uint32_t tail = static_cast<uint32_t>(lastHeadTail >> 32);
+    int32_t rh = static_cast<int32_t>(lastQueryRet);
+    int32_t rt = static_cast<int32_t>(lastQueryRet >> 32);
     if (sampleLive) {
         rh = cp1QueryProp(p->devId, p->sqId, DRV_SQCQ_PROP_SQ_HEAD, &head, nullptr);
         rt = cp1QueryProp(p->devId, p->sqId, DRV_SQCQ_PROP_SQ_TAIL, &tail, nullptr);
