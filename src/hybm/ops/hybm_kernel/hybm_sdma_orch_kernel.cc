@@ -497,13 +497,13 @@ extern "C" __attribute__((visibility("default"))) uint32_t HybmSdmaOrchEpoch(voi
 #ifdef HYBM_G1C_DEVICE_TRACE
         // 每 32 封请求采样一次实时 SQ HEAD/TAIL，批次进度每次留痕。
         g1cStamp(p, &ctx, head - 1, G1C_BEFORE_DOORBELL,
-                 0, (head % 32) == 0);
+                 0, (head / 32) != ((head - batch) / 32));
 #endif
         ret = flushBatchDoorbell(p, &ctx); // 批末统一敲铃
 #ifdef HYBM_G1C_DEVICE_TRACE
         g1cStamp(p, &ctx, head - 1,
                  ret == 0 ? G1C_AFTER_DOORBELL : G1C_DEVICE_ERROR,
-                 ret, (head % 32) == 0);
+                 ret, (head / 32) != ((head - batch) / 32));
 #endif
         if (ret != 0) {
             result->mainRet = static_cast<uint32_t>(ret);
