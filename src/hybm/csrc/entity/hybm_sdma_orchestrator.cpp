@@ -39,6 +39,7 @@
 
 #include "dl_rt_api.h"
 #include "mf_env_define.h"
+#include "hybm_g1c_device_trace.h"
 
 namespace ock {
 namespace mf {
@@ -764,6 +765,8 @@ void SdmaOrchestrator::SupervisorLoop()
     // 仅在显式 MF_SDMA_ORCH_DIAG=1 时开启只读快照；不修改 SQE、邮箱或 Epoch 协议。
     const char *diagEnv = std::getenv("MF_SDMA_ORCH_DIAG");
     const bool diagEnabled = diagEnv != nullptr && std::strcmp(diagEnv, "1") == 0;
+    const char* g1cEnv = std::getenv("MF_SDMA_ORCH_G1C_TRACE");
+    const bool g1cEnabled = diagEnabled && g1cEnv && std::strcmp(g1cEnv, "1") == 0;
     uint64_t diagEpoch = 1;
     uint64_t diagLastReqHead = 0;
     uint64_t diagLastReqTail = 0;
@@ -830,6 +833,32 @@ void SdmaOrchestrator::SupervisorLoop()
             continue; // 当前纪仍在跑
         }
         /* 纪已退出: 耗时观测(≈预算=心跳生效; 持续远超说明异常, 影响同步等待上界) */
+        // 独立私有 workspace 64B 取证区。Host D2H 读数不等同于实时 SQ 原子快照。
+        // 依赖新设备 v12 二进制真实写入；未启用/零帧必须标为 UNKNOWN。
+        if (g1cEnabled && (heartbeat % HYBM_SDMA_ORCH_HEARTBEAT_HZ) == 0) {
+            HybmG1cDeviceTrace snap = {};
+            const auto g1cRc = DlAclApi::AclrtMemcpy(
+                &snap, sizeof(snap),
+                reinterpret_cast<void*>(wsBase + HYBM_G1C_DEVICE_TRACE_OFF),
+                sizeof(snap), ACL_MEMCPY_DEVICE_TO_HOST);
+            if (g1cRc != BM_OK) {
+                BM_LOG_WARN("[MF_G1C] devId: " << devId_ << " epoch: " << diagEpoch
+                            << " snapshotError: " << g1cRc);
+            } else {
+                const bool valid = snap.seqBegin != 0 && snap.seqBegin == snap.seqEnd;
+                BM_LOG_WARN("[MF_G1C] devId: " << devId_ << " epoch: " << diagEpoch
+                            << " valid: " << valid
+                            << " phase: " << (valid ? snap.phase : 0)
+                            << " reqSeq: " << (valid ? snap.reqSeq : 0)
+                            << " shadowTail: " << static_cast<uint32_t>(snap.shadowTailDepth)
+                            << " sqDepth: " << (snap.shadowTailDepth >> 32)
+                            << " hwHeadLast: " << static_cast<uint32_t>(snap.liveHeadTail)
+                            << " hwTailLast: " << (snap.liveHeadTail >> 32)
+                            << " queryHeadRcLast: " << static_cast<int32_t>(snap.queryRet)
+                            << " queryTailRcLast: " << static_cast<int32_t>(snap.queryRet >> 32)
+                            << " error: " << snap.error);
+            }
+        }
         const auto epochMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - tEpoch).count();
         if (diagEnabled) {
