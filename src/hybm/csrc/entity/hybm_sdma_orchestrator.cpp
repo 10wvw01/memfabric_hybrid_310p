@@ -829,10 +829,6 @@ void SdmaOrchestrator::SupervisorLoop()
                             << " epoch: " << diagEpoch << " ret: " << diagRet);
             }
         }
-        if (r.exitReason == HYBM_SDMA_ORCH_EXIT_RUNNING) {
-            continue; // 当前纪仍在跑
-        }
-        /* 纪已退出: 耗时观测(≈预算=心跳生效; 持续远超说明异常, 影响同步等待上界) */
         // 独立私有 workspace 64B 取证区。Host D2H 读数不等同于实时 SQ 原子快照。
         // 依赖新设备 v12 二进制真实写入；未启用/零帧必须标为 UNKNOWN。
         if (g1cEnabled && (heartbeat % HYBM_SDMA_ORCH_HEARTBEAT_HZ) == 0) {
@@ -859,6 +855,10 @@ void SdmaOrchestrator::SupervisorLoop()
                             << " error: " << snap.error);
             }
         }
+        if (r.exitReason == HYBM_SDMA_ORCH_EXIT_RUNNING) {
+            continue; // 当前纪仍在跑
+        }
+        /* 纪已退出: 耗时观测(≈预算=心跳生效; 持续远超说明异常, 影响同步等待上界) */
         const auto epochMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - tEpoch).count();
         if (diagEnabled) {
