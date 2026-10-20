@@ -1,6 +1,13 @@
 # 310P3 G1-C：AICPU / CP SQ 第一停止点取证
 
-> 仅诊断，未经实机编译和 Gate E 运行。上层完整 G1-C 分析与复原流程见 vllm-ascend 同名 G1-C 分支的 `docs/G1C_DEVICE_FIRST_STOP_DESIGN_20261020.md`。
+> 仅诊断。**2026-10-20 实机执行完毕**：CANN 9.1 编译（KVER=12 + `MF_SDMA_ORCH_G1C_DEVICE_TRACE=ON`）通过；
+> Gate C1 双 Rank 链路自检通过（HAL 查询 rc=0、SQ 游标实时推进、干净回绕）；
+> Gate C2 会话 C2R2 复现双 Rank AICore timeout，**停滞瞬间双设备 CP SQ 均为空
+> （hwHead==hwTail、请求环排空、纪健康轮转）**——设备侧直接证据反驳 H1/H2。
+> 全部证据、时间线与判别见 vllm-ascend G1-C 分支
+> `csrc/_310P/memfabric_mm_ar_v2/docs/G1C_DEVICE_FIRST_STOP_REPORT_20261020.md`。
+> 本仓库 G1-C 分支无源码修改（实机兼容修复均在 vllm-ascend 侧的诊断脚本/Host 采样器）。
+> 上层完整 G1-C 分析与复原流程见 vllm-ascend 同名 G1-C 分支的 `docs/G1C_DEVICE_FIRST_STOP_DESIGN_20261020.md`。
 
 ## 目标与边界
 
@@ -43,4 +50,6 @@ unset MF_SDMA_ORCH_EPOCH_BUDGET_S  # 保持 15 秒 Epoch；禁止无限常驻
 4. 诊断 HAL 查询和工作区 cache clean 改变 AICPU 时间线；不能与未埋点 F01/B02 混算故障复现率。
 5. 失败先保存原始日志与设备 slog/plog，不在 G1-C 修改 SQ 判断或清理其他进程。停止所有测试进程后，恢复两处 Host 原库并哈希复核。原 G1-B worktree、KVER11 部署库和历史证据均不覆盖。
 
-状态：**代码提交待 CANN 9.1 实机验证，不具备生产启用条件。**
+状态：**已实机验证（2026-10-20，310P3 双 Rank）**；仅诊断用途，不具备生产启用条件。
+实机结论：CP SQ 消费链在故障瞬间健康排空，第一停止点位于 V2 到达邮件等待侧（详见
+vllm-ascend G1-C 执行报告）；根因仍未定。
