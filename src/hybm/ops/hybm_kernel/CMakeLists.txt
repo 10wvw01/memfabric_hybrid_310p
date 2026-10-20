@@ -97,18 +97,27 @@ set(SDMA_ORCH_JSON_CUST_OUT "${CMAKE_CURRENT_BINARY_DIR}/libmf_sdma_orch.json") 
 
 # 设备侧 launch 版本号(缓存变量): launch json 的 kernelSo 与部署链的复制目标名都用它
 set(MF_SDMA_ORCH_KVER "11" CACHE STRING "310P sdma orchestrator kernel device-side version (CP1 dlopen cache busting)")
+option(MF_SDMA_ORCH_G1C_DEVICE_TRACE "Build G1-C SQ device trace; requires isolated v12 binary" OFF)
+set(_g1c_device_def "")
+if(MF_SDMA_ORCH_G1C_DEVICE_TRACE)
+  if(NOT MF_SDMA_ORCH_KVER STREQUAL "12")
+    message(FATAL_ERROR "G1-C SQ trace must use separate MF_SDMA_ORCH_KVER=12")
+  endif()
+  set(_g1c_device_def "-DHYBM_G1C_DEVICE_TRACE=1")
+endif()
 # launch json 输出路径(文件名带版本号)
 set(SDMA_ORCH_JSON_LAUNCH_OUT "${CMAKE_CURRENT_BINARY_DIR}/libmf_sdma_orch_v${MF_SDMA_ORCH_KVER}.json")
 
 add_custom_command( # 编排 kernel so 编译(hcc 交叉编译)
     OUTPUT ${SDMA_ORCH_SO_OUTPUT} # 产物: 设备侧 so
     COMMAND ${AICPU_COMPILER} # aarch64 交叉编译器
-        -shared -O2 -std=c++17 -fPIC # 共享库/O2/C++17/位置无关
+        -shared -O2 -std=c++17 -fPIC ${_g1c_device_def} # 共享库/O2/C++17/位置无关
         ${AICPU_INC_FLAGS} # include 路径(含 smem 布局头共享目录)
         -o ${SDMA_ORCH_SO_OUTPUT} # 输出目标
         ${CMAKE_CURRENT_SOURCE_DIR}/hybm_sdma_orch_kernel.cc # kernel 源文件
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/hybm_sdma_orch_kernel.cc # 依赖: kernel 源
             ${CMAKE_CURRENT_SOURCE_DIR}/hybm_sdma_contract.h # 依赖: wire 契约头
+            ${CMAKE_CURRENT_SOURCE_DIR}/hybm_g1c_device_trace.h # G1-C 私有诊断布局
     COMMENT "Compiling 310P sdma orchestrator kernel (libmf_sdma_orch.so)"
 )
 
