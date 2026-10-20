@@ -62,6 +62,9 @@
 #include <unistd.h>
 
 #include "hybm_sdma_contract.h"
+#ifdef HYBM_G1C_DEVICE_TRACE
+#include "hybm_g1c_device_trace.h"
+#endif
 
 // 设备侧 HAL 弱符号 — CP1 dlopen 环境按名解析, 解析不到判 nullptr 报错
 extern "C" {
@@ -231,6 +234,39 @@ int32_t cp1QueryProp(uint32_t devId, uint32_t sqId, uint32_t prop, uint32_t *v0,
     return r;
 }
 
+#ifdef HYBM_G1C_DEVICE_TRACE
+// 诊断开启才查询设备侧真实 SQ 游标。普通编排路径完全不增加 HAL 调用。
+// 64B 私有工作区，与旧 result/wire ABI 不重叠；每次只刷一个缓存行。
+void g1cStamp(const ock::mf::HybmSdmaOrchParam *p, const SqContext *ctx,
+              uint64_t reqSeq, uint64_t phase, uint32_t error, bool sampleLive)
+{
+    using namespace ock::mf;
+    auto *stamp = reinterpret_cast<volatile HybmG1cDeviceTrace *>(
+        p->resultAddr + HYBM_G1C_DEVICE_TRACE_OFF);
+    uint32_t head = ctx->sqHead, tail = ctx->sqTail;
+    int32_t rh = -1, rt = -1;
+    if (sampleLive) {
+        rh = cp1QueryProp(p->devId, p->sqId, DRV_SQCQ_PROP_SQ_HEAD, &head, nullptr);
+        rt = cp1QueryProp(p->devId, p->sqId, DRV_SQCQ_PROP_SQ_TAIL, &tail, nullptr);
+    }
+    const uint64_t generation = (reqSeq << 8) | (phase & 0xFFu);
+    stamp->seqBegin = 0; // 中途读取视为无效；末尾与开头帧号配对
+    stamp->phase = phase;
+    stamp->reqSeq = reqSeq;
+    stamp->shadowTailDepth =
+        (static_cast<uint64_t>(ctx->sqDepth) << 32) | ctx->sqTail;
+    stamp->liveHeadTail = (static_cast<uint64_t>(tail) << 32) | head;
+    stamp->queryRet =
+        (static_cast<uint64_t>(static_cast<uint32_t>(rt)) << 32) |
+        static_cast<uint32_t>(rh);
+    stamp->error = error;
+    stamp->seqEnd = generation;
+    stamp->seqBegin = generation;
+    cacheFlushLine(reinterpret_cast<uintptr_t>(stamp));
+    memBarrier();
+}
+#endif
+
 // 活查询 + 提交上下文装配(失败码写入返回值, 语义见各 1xxx 分支)
 int32_t cp1LiveQuery(const ock::mf::HybmSdmaOrchParam *p, SqContext *ctx)
 {
@@ -354,10 +390,19 @@ int32_t consumeOneMail(const ock::mf::HybmSdmaOrchParam *p, SqContext *ctx, uint
     cacheFlushLine(arrMailSlot & ~static_cast<uintptr_t>(63)); // 刷出邮件像(SQE 可读)
     const uint64_t peerArrStamp = peerRes + SMEM_SHM_SDMA_RS_ARR_STAMP +
                                   (seq % SMEM_SHM_SDMA_RS_ARR_SLOTS) * 8; // 对端到达戳槽
+#ifdef HYBM_G1C_DEVICE_TRACE
+    g1cStamp(p, ctx, seq, ock::mf::G1C_MAIL_READ, 0, false);
+#endif
     auto ret = issueMailSqes(p, ctx, ssid, seq, mail, arrMailSlot, peerArrStamp);
     if (ret != 0) {
+#ifdef HYBM_G1C_DEVICE_TRACE
+        g1cStamp(p, ctx, seq, ock::mf::G1C_DEVICE_ERROR, ret, true);
+#endif
         return ret;
     }
+#ifdef HYBM_G1C_DEVICE_TRACE
+    g1cStamp(p, ctx, seq, ock::mf::G1C_SQE_READY, 0, false);
+#endif
     storeCell(p->reqBase - SMEM_SHM_SDMA_RS_REQ_RING + SMEM_SHM_SDMA_RS_REQ_HEAD, seq + 1); // reqHead 推进
     return 0;
 }
@@ -388,6 +433,9 @@ extern "C" __attribute__((visibility("default"))) uint32_t HybmSdmaOrchEpoch(voi
         finishResult(result);
         return 1;
     }
+#ifdef HYBM_G1C_DEVICE_TRACE
+    g1cStamp(p, &ctx, 0, G1C_EPOCH_START, 0, true);
+#endif
     const uint16_t ssid = querySsid(p->devId); // ssid 实时查询(严禁硬编码)
     uint64_t head = loadCell(p->reqBase - SMEM_SHM_SDMA_RS_REQ_RING + SMEM_SHM_SDMA_RS_REQ_HEAD); // 消费起点
     /* 心跳预算(v11): 常驻哨兵不判心跳(诊断模式); 0 用默认 15s(兼容旧 host);
@@ -435,7 +483,17 @@ extern "C" __attribute__((visibility("default"))) uint32_t HybmSdmaOrchEpoch(voi
         if (head == 0) { // 错误标记(双循环跳出)
             break;
         }
+#ifdef HYBM_G1C_DEVICE_TRACE
+        // 每 32 封请求采样一次实时 SQ HEAD/TAIL，批次进度每次留痕。
+        g1cStamp(p, &ctx, head - 1, G1C_BEFORE_DOORBELL,
+                 0, (head % 32) == 0);
+#endif
         ret = flushBatchDoorbell(p, &ctx); // 批末统一敲铃
+#ifdef HYBM_G1C_DEVICE_TRACE
+        g1cStamp(p, &ctx, head - 1,
+                 ret == 0 ? G1C_AFTER_DOORBELL : G1C_DEVICE_ERROR,
+                 ret, (head % 32) == 0);
+#endif
         if (ret != 0) {
             result->mainRet = static_cast<uint32_t>(ret);
             result->exitReason = HYBM_SDMA_ORCH_EXIT_ERROR;
@@ -445,6 +503,12 @@ extern "C" __attribute__((visibility("default"))) uint32_t HybmSdmaOrchEpoch(voi
     uint32_t headA = ctx.sqHead; // head 采样初值(查询失败时兜底)
     (void)cp1QueryProp(p->devId, p->sqId, DRV_SQCQ_PROP_SQ_HEAD, &headA, nullptr); // 面包屑: head 采样
     result->headAfter = headA;
+#ifdef HYBM_G1C_DEVICE_TRACE
+    g1cStamp(p, &ctx, head == 0 ? 0 : head - 1,
+             result->exitReason == HYBM_SDMA_ORCH_EXIT_ERROR
+                 ? G1C_DEVICE_ERROR : G1C_EPOCH_EXIT,
+             result->mainRet, true);
+#endif
     finishResult(result);
     return (result->exitReason == HYBM_SDMA_ORCH_EXIT_ERROR) ? 1 : 0;
 }
