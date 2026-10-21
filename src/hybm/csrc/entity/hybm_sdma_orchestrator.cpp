@@ -767,6 +767,11 @@ void SdmaOrchestrator::SupervisorLoop()
     const bool diagEnabled = diagEnv != nullptr && std::strcmp(diagEnv, "1") == 0;
     const char* g1cEnv = std::getenv("MF_SDMA_ORCH_G1C_TRACE");
     const bool g1cEnabled = diagEnabled && g1cEnv && std::strcmp(g1cEnv, "1") == 0;
+    // G1-D 只读保留区快照与 G1-C v12 工作区快照分别开关。
+    // 环结构的 5 次短 D2H 仅在显式启用时运行，不修改 AICPU/SDMA 状态机。
+    const char* g1dEnv = std::getenv("MF_SDMA_ORCH_G1D_TRACE");
+    const bool g1dEnabled = diagEnabled && g1dEnv &&
+                            std::strcmp(g1dEnv, "1") == 0;
     uint64_t diagEpoch = 1;
     uint64_t diagLastReqHead = 0;
     uint64_t diagLastReqTail = 0;
@@ -853,6 +858,67 @@ void SdmaOrchestrator::SupervisorLoop()
                             << " queryHeadRcLast: " << static_cast<int32_t>(snap.queryRet)
                             << " queryTailRcLast: " << static_cast<int32_t>(snap.queryRet >> 32)
                             << " error: " << snap.error);
+            }
+        }
+        if (g1dEnabled && (heartbeat % HYBM_SDMA_ORCH_HEARTBEAT_HZ) == 0) {
+            // 槽布局严格引用共享头；按局部 resBase 读取，不能将 peer GVA
+            // 当成本地 AclrtMemcpy 源。快照不具备跨行原子性。
+            const uint64_t resBase = epochParam_.reqBase - SMEM_SHM_SDMA_RS_REQ_RING;
+            uint64_t stampEndAndMail0[8] = {};  // 0x2a00: stamp[1020..1023] + mail[0]
+            uint64_t mailEndAndHead[8] = {};    // 0xaa00: mail[1023] + arrHead
+            uint64_t stampBegin[4] = {};       // 0x0a20: stamp[0..3]
+            uint64_t quietEnd[4] = {};         // 0x09f0: quiet[60..63]
+            uint64_t quietBegin[4] = {};       // 0x0810: quiet[0..3]
+            const auto copyD2H = [](void* dst, uint64_t addr, size_t bytes) {
+                return DlAclApi::AclrtMemcpy(dst, bytes,
+                    reinterpret_cast<const void*>(addr),
+                    bytes, ACL_MEMCPY_DEVICE_TO_HOST);
+            };
+            const auto rcEnd = copyD2H(stampEndAndMail0,
+                resBase + SMEM_SHM_SDMA_RS_ARR_STAMP +
+                    (SMEM_SHM_SDMA_RS_ARR_SLOTS - 4) * sizeof(uint64_t),
+                sizeof(stampEndAndMail0));
+            const auto rcHead = copyD2H(mailEndAndHead,
+                resBase + SMEM_SHM_SDMA_RS_ARR_MAIL +
+                    (SMEM_SHM_SDMA_RS_ARR_SLOTS - 1) * sizeof(HybmSdmaArrMail),
+                sizeof(mailEndAndHead));
+            const auto rcFirst = copyD2H(stampBegin,
+                resBase + SMEM_SHM_SDMA_RS_ARR_STAMP,
+                sizeof(stampBegin));
+            const auto rcQuietEnd = copyD2H(quietEnd,
+                resBase + SMEM_SHM_SDMA_RS_QUIET +
+                    (SMEM_SHM_SDMA_RS_QUIET_SLOTS - 4) * sizeof(uint64_t),
+                sizeof(quietEnd));
+            const auto rcQuietFirst = copyD2H(quietBegin,
+                resBase + SMEM_SHM_SDMA_RS_QUIET,
+                sizeof(quietBegin));
+            if (rcEnd != BM_OK || rcHead != BM_OK || rcFirst != BM_OK ||
+                rcQuietEnd != BM_OK || rcQuietFirst != BM_OK) {
+                BM_LOG_WARN("[MF_G1D] devId: " << devId_ << " epoch: " << diagEpoch
+                    << " snapshotError: " << rcEnd << "," << rcHead
+                    << "," << rcFirst << "," << rcQuietEnd << "," << rcQuietFirst);
+            } else {
+                // 一行打全关键值：实际 seq/slot 从 ArrHead 核对，而非预设 1023。
+                BM_LOG_WARN("[MF_G1D] devId: " << devId_ << " epoch: " << diagEpoch
+                    << " arrHead: " << mailEndAndHead[4]
+                    << " stamp1020: " << stampEndAndMail0[0]
+                    << " stamp1021: " << stampEndAndMail0[1]
+                    << " stamp1022: " << stampEndAndMail0[2]
+                    << " stamp1023: " << stampEndAndMail0[3]
+                    << " stamp0: " << stampBegin[0]
+                    << " stamp1: " << stampBegin[1]
+                    << " stamp2: " << stampBegin[2]
+                    << " mail1023Seq: " << mailEndAndHead[0]
+                    << " mail1023Dst: " << mailEndAndHead[1]
+                    << " mail1023Len: " << mailEndAndHead[2]
+                    << " mail1023Imm: " << mailEndAndHead[3]
+                    << " mail0Seq: " << stampEndAndMail0[4]
+                    << " quiet60: " << quietEnd[0]
+                    << " quiet61: " << quietEnd[1]
+                    << " quiet62: " << quietEnd[2]
+                    << " quiet63: " << quietEnd[3]
+                    << " quiet0: " << quietBegin[0]
+                    << " quiet1: " << quietBegin[1]);
             }
         }
         if (r.exitReason == HYBM_SDMA_ORCH_EXIT_RUNNING) {
