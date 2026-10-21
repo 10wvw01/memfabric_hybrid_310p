@@ -12,7 +12,7 @@ G1-D 只修改 SdmaOrchestrator::SupervisorLoop 的 Host 采样，未改 AICPU�
 ## 开关与取证内容
 
 显式设置 MF_SDMA_ORCH_DIAG=1 和 MF_SDMA_ORCH_G1D_TRACE=1 才会启用额外取证。
-每秒 5 次短 D2H，总计读取 224B（非同一时刻原子快照）。
+每秒最多 7 次短 D2H，总计读取 264B（非同一时刻原子快照）。
 
 | 保留区偏移 | 字节 | 内容 |
 |---|---:|---|
@@ -21,8 +21,9 @@ G1-D 只修改 SdmaOrchestrator::SupervisorLoop 的 Host 采样，未改 AICPU�
 | 0x0A20 | 32 | ARR_STAMP[0..3] |
 | 0x09F0 | 32 | quiet[60..63] |
 | 0x0810 | 32 | quiet[0..3] |
+| 动态 headSlot=ArrHead%1024 | 8+32 | 当前等待槽 Stamp + Mail（按非原子快照记录） |
 
-日志标记 [MF_G1D]，分别打印 devId、epoch、arrHead、边界 Stamp、邮件字段、quiet 戳；拷贝失败时打印五个独立 snapshotError 返回码。
+日志标记 [MF_G1D]，分别打印 devId、epoch、arrHead、边界 Stamp、邮件字段、quiet 戳；拷贝失败时打印七个独立 snapshotError 返回码。
 地址、邮件字段只写入服务器原始日志；公开 GitHub 版本必须脱敏。
 
 ## 验收与禁令
