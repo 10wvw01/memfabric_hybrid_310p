@@ -860,6 +860,14 @@ void SdmaOrchestrator::SupervisorLoop()
                             << " error: " << snap.error);
             }
         }
+        // G1-D 采样窗口必须紧贴环尾、头游标的共享 Cache Line。
+        // 布局漂移时强制编译失败，禁止误将其他地址解释成邮件。
+        static_assert(SMEM_SHM_SDMA_RS_ARR_STAMP +
+                SMEM_SHM_SDMA_RS_ARR_SLOTS * sizeof(uint64_t) ==
+                SMEM_SHM_SDMA_RS_ARR_MAIL, "ARR STAMP/Mail adjacency changed");
+        static_assert(SMEM_SHM_SDMA_RS_ARR_MAIL +
+                SMEM_SHM_SDMA_RS_ARR_SLOTS * sizeof(HybmSdmaArrMail) ==
+                SMEM_SHM_SDMA_RS_ARR_HEAD, "ARR Mail/head adjacency changed");
         if (g1dEnabled && (heartbeat % HYBM_SDMA_ORCH_HEARTBEAT_HZ) == 0) {
             // 槽布局严格引用共享头；按局部 resBase 读取，不能将 peer GVA
             // 当成本地 AclrtMemcpy 源。快照不具备跨行原子性。
