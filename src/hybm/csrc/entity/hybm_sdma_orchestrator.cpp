@@ -900,15 +900,41 @@ void SdmaOrchestrator::SupervisorLoop()
             const auto rcQuietFirst = copyD2H(quietBegin,
                 resBase + SMEM_SHM_SDMA_RS_QUIET,
                 sizeof(quietBegin));
+            // 固定边界仅适用于 seq1023 假设；动态采集当前 ArrHead
+            // 指向的槽，防止真实故障发生在其他序号而产生取证盲区。
+            uint64_t currentStamp = 0;
+            uint64_t currentMail[4] = {};
+            uint64_t currentSlot = 0;
+            int32_t rcCurrentStamp = -1;
+            int32_t rcCurrentMail = -1;
+            if (rcHead == BM_OK) {
+                currentSlot = mailEndAndHead[4] % SMEM_SHM_SDMA_RS_ARR_SLOTS;
+                rcCurrentStamp = copyD2H(&currentStamp,
+                    resBase + SMEM_SHM_SDMA_RS_ARR_STAMP +
+                        currentSlot * sizeof(uint64_t),
+                    sizeof(currentStamp));
+                rcCurrentMail = copyD2H(currentMail,
+                    resBase + SMEM_SHM_SDMA_RS_ARR_MAIL +
+                        currentSlot * sizeof(HybmSdmaArrMail),
+                    sizeof(currentMail));
+            }
             if (rcEnd != BM_OK || rcHead != BM_OK || rcFirst != BM_OK ||
-                rcQuietEnd != BM_OK || rcQuietFirst != BM_OK) {
+                rcQuietEnd != BM_OK || rcQuietFirst != BM_OK ||
+                rcCurrentStamp != BM_OK || rcCurrentMail != BM_OK) {
                 BM_LOG_WARN("[MF_G1D] devId: " << devId_ << " epoch: " << diagEpoch
                     << " snapshotError: " << rcEnd << "," << rcHead
-                    << "," << rcFirst << "," << rcQuietEnd << "," << rcQuietFirst);
+                    << "," << rcFirst << "," << rcQuietEnd << "," << rcQuietFirst
+                    << "," << rcCurrentStamp << "," << rcCurrentMail);
             } else {
                 // 一行打全关键值：实际 seq/slot 从 ArrHead 核对，而非预设 1023。
                 BM_LOG_WARN("[MF_G1D] devId: " << devId_ << " epoch: " << diagEpoch
                     << " arrHead: " << mailEndAndHead[4]
+                    << " headSlot: " << currentSlot
+                    << " headStamp: " << currentStamp
+                    << " headMailSeq: " << currentMail[0]
+                    << " headMailDst: " << currentMail[1]
+                    << " headMailLen: " << currentMail[2]
+                    << " headMailImm: " << currentMail[3]
                     << " stamp1020: " << stampEndAndMail0[0]
                     << " stamp1021: " << stampEndAndMail0[1]
                     << " stamp1022: " << stampEndAndMail0[2]
