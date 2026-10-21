@@ -954,6 +954,74 @@ void SdmaOrchestrator::SupervisorLoop()
                     << " quiet0: " << quietBegin[0]
                     << " quiet1: " << quietBegin[1]);
             }
+            // G1-D2 尾槽扩展（D1R4 裁决后批准）：环冻结时被等邮件位于 head-1
+            // （D1R4 实测 dev0 seq8632@槽439、dev1 seq8634@槽441，均=最后落地封）。
+            // 直读 head-1..head-4 槽的 stamp/mail 实值，区分两种剩余分支：
+            //   (a) stamp 仍持上圈旧值 → 该槽写入从未落地（发送侧写链丢失）；
+            //   (b) stamp/mail 为新值但 AICore 轮询不返回 → 写入在、读不可见。
+            // 仅扩展 Host D2H 只读集合（7→15 次/秒，单次 ≤32B）；不改 SQE/
+            // mailbox/epoch/布局/设备核。槽号跨回绕安全取模。
+            if (rcHead == BM_OK) {
+                const uint64_t tailBase = mailEndAndHead[4];
+                const uint64_t headMod = tailBase % SMEM_SHM_SDMA_RS_ARR_SLOTS;
+                uint64_t tailStamp[4] = {};
+                uint64_t tailMail[4][4] = {};
+                uint64_t tailSlot[4] = {};
+                int32_t rcTail[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+                for (uint32_t k = 0; k < 4; ++k) {
+                    tailSlot[k] = (headMod + SMEM_SHM_SDMA_RS_ARR_SLOTS - 1 - k)
+                                  % SMEM_SHM_SDMA_RS_ARR_SLOTS;
+                    rcTail[k] = copyD2H(&tailStamp[k],
+                        resBase + SMEM_SHM_SDMA_RS_ARR_STAMP +
+                            tailSlot[k] * sizeof(uint64_t),
+                        sizeof(tailStamp[k]));
+                    rcTail[4 + k] = copyD2H(tailMail[k],
+                        resBase + SMEM_SHM_SDMA_RS_ARR_MAIL +
+                            tailSlot[k] * sizeof(HybmSdmaArrMail),
+                        sizeof(tailMail[k]));
+                }
+                bool tailOk = true;
+                for (uint32_t k = 0; k < 8; ++k) {
+                    if (rcTail[k] != BM_OK) { tailOk = false; }
+                }
+                if (!tailOk) {
+                    BM_LOG_WARN("[MF_G1D_TAIL] devId: " << devId_
+                        << " epoch: " << diagEpoch
+                        << " snapshotError: " << rcTail[0] << "," << rcTail[1]
+                        << "," << rcTail[2] << "," << rcTail[3]
+                        << "," << rcTail[4] << "," << rcTail[5]
+                        << "," << rcTail[6] << "," << rcTail[7]);
+                } else {
+                    // t1=最近已写槽(head-1)……t4=head-4；stamp 与 mail 同槽同读。
+                    BM_LOG_WARN("[MF_G1D_TAIL] devId: " << devId_
+                        << " epoch: " << diagEpoch
+                        << " arrHead: " << tailBase
+                        << " t1Slot: " << tailSlot[0]
+                        << " t1Stamp: " << tailStamp[0]
+                        << " t1Seq: " << tailMail[0][0]
+                        << " t1Dst: " << tailMail[0][1]
+                        << " t1Len: " << tailMail[0][2]
+                        << " t1Imm: " << tailMail[0][3]
+                        << " t2Slot: " << tailSlot[1]
+                        << " t2Stamp: " << tailStamp[1]
+                        << " t2Seq: " << tailMail[1][0]
+                        << " t2Dst: " << tailMail[1][1]
+                        << " t2Len: " << tailMail[1][2]
+                        << " t2Imm: " << tailMail[1][3]
+                        << " t3Slot: " << tailSlot[2]
+                        << " t3Stamp: " << tailStamp[2]
+                        << " t3Seq: " << tailMail[2][0]
+                        << " t3Dst: " << tailMail[2][1]
+                        << " t3Len: " << tailMail[2][2]
+                        << " t3Imm: " << tailMail[2][3]
+                        << " t4Slot: " << tailSlot[3]
+                        << " t4Stamp: " << tailStamp[3]
+                        << " t4Seq: " << tailMail[3][0]
+                        << " t4Dst: " << tailMail[3][1]
+                        << " t4Len: " << tailMail[3][2]
+                        << " t4Imm: " << tailMail[3][3]);
+                }
+            }
         }
         if (r.exitReason == HYBM_SDMA_ORCH_EXIT_RUNNING) {
             continue; // 当前纪仍在跑
