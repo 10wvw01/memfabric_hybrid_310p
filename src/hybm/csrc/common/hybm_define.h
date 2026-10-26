@@ -15,11 +15,44 @@
 #include <netinet/in.h>
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include <vector>
 #include "mf_out_logger.h"
 
 namespace ock {
 namespace mf {
+
+/* ACL VMM aclrtMemSetAccess 的 location.id 需要全局物理设备号， 而本库全链设备号
+ * 来自 aclrtGetDevice 的逻辑号(ASCEND_RT_VISIBLE_DEVICES 重映射后的连续编号)。
+ * identity 映射(未设置可见列表或 "0,1")下二者恒等故从未暴露； 非零起点可见列表
+ * (如 "2,3")下 SetAccess 以逻辑号授权会 507899(实测定位于驱动内部错误)。
+ * 按 CANN 运行时同款语义解析可见列表， 将逻辑号换算为物理号； 仅 SetAccess 消费，
+ * aclrtMallocPhysical 等其余 VMM API 实测要求逻辑号， 保持原值不改。 */
+inline uint32_t HybmPhysicalDeviceIdOf(uint32_t logicDevId)
+{
+    const char *vis = std::getenv("ASCEND_RT_VISIBLE_DEVICES");
+    if (vis == nullptr || *vis == '\0') {
+        return logicDevId; // 未设置: 逻辑==物理
+    }
+    uint32_t idx = 0;
+    const char *p = vis;
+    while (*p != '\0') {
+        char *end = nullptr;
+        const unsigned long v = std::strtoul(p, &end, 10);
+        if (end == p) {
+            break; // 解析失败: 退回 identity
+        }
+        if (idx == logicDevId) {
+            return static_cast<uint32_t>(v);
+        }
+        ++idx;
+        p = (*end == ',') ? end + 1 : end;
+        while (*p == ' ') {
+            ++p; // 容忍逗号后空格
+        }
+    }
+    return logicDevId; // 列表短于逻辑号(异常): 退回 identity
+}
 
 constexpr uint64_t KB = 1024ULL;
 constexpr uint64_t MB = KB * 1024ULL;
